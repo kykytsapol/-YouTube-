@@ -1,0 +1,747 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "name": "Методика измерения реакции аудитории на YouTube.ipynb",
+      "provenance": [],
+      "collapsed_sections": [],
+      "toc_visible": true,
+      "authorship_tag": "ABX9TyOEye9v0sB0FibiyKw9WZ9Y",
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/kykytsapol/-YouTube-/blob/main/%D0%98%D1%82%D0%BE%D0%B3%3A%20%D0%BC%D0%B5%D1%82%D0%BE%D0%B4%D0%B8%D0%BA%D0%B0_%D0%B8%D0%B7%D0%BC%D0%B5%D1%80%D0%B5%D0%BD%D0%B8%D1%8F_%D1%80%D0%B5%D0%B0%D0%BA%D1%86%D0%B8%D0%B8_%D0%B0%D1%83%D0%B4%D0%B8%D1%82%D0%BE%D1%80%D0%B8%D0%B8_%D0%BD%D0%B0_YouTube\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "_-DBi46ZLDQu"
+      },
+      "outputs": [],
+      "source": [
+        "# для измерении реакции аудтории нам понадобятся следующие библиотеки:\n",
+        "import pandas as pandas\n",
+        "#from randan.descriptive_statistics import ScaleStatistics\n",
+        "import numpy as np\n",
+        "import scipy.stats\n",
+        "import math\n",
+        "from sklearn.feature_extraction.text import CountVectorizer\n",
+        "import matplotlib.pyplot as plt\n",
+        "import gensim\n",
+        "from gensim.models import LdaModel\n",
+        "import gensim.corpora as corpora\n",
+        "from gensim.utils import simple_preprocess\n",
+        "from gensim.models import CoherenceModel\n",
+        "from sklearn.model_selection import train_test_split\n",
+        "from sklearn.model_selection import GridSearchCV\n",
+        "from sklearn.metrics import confusion_matrix \n",
+        "import seaborn as sns\n",
+        "from sklearn.naive_bayes import BernoulliNB"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "### Анализ числовых метрик"
+      ],
+      "metadata": {
+        "id": "f_kJ4YUrw0CQ"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Открываем файл с найденными каналами и их метриками\n",
+        "channels = pandas.read_excel('ваши_каналы.xlsx', index_col = 0)"
+      ],
+      "metadata": {
+        "id": "RfDkDl-Dup5Q"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Открываем файл с найденными видео и их метриками\n",
+        "videos = pandas.read_excel('ваши_видео.xlsx', index_col = 0)"
+      ],
+      "metadata": {
+        "id": "JmO77IMqu1uw"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Выводим описательные статистики для метрик канала: количество подписчиков и видео\n",
+        "ss = ScaleStatistics(channels, ['statistics.subscriberCount', 'statistics.videoCount'], normality_test=True)"
+      ],
+      "metadata": {
+        "id": "pcoAm3ycuray"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Выводим описательные статситики для метрик видео: количество просмотров, лайков и комментриев\n",
+        "ss = ScaleStatistics(videos, ['statistics.viewCount', 'statistics.likeCount', 'statistics.commentCount'], normality_test=True)"
+      ],
+      "metadata": {
+        "id": "w8cTlBjhu5pu"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Рассчитываем вовлеченность аудитории\n",
+        "videos['invl']= videos['statistics.likeCount']\\\n",
+        "                + videos['statistics.commentCount']\n",
+        "\n",
+        "videos[['invl',\n",
+        "      'statistics.likeCount',\n",
+        "      'statistics.viewCount']]"
+      ],
+      "metadata": {
+        "id": "HG2FNt7Wu74h"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Выводим описательные статистики для вовлеченности аудитории\n",
+        "ss = ScaleStatistics(videos, ['invl'], normality_test=True)"
+      ],
+      "metadata": {
+        "id": "33KMxnu8u9Et"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Эта функция позволяет рассчитать доверительный интервал\n",
+        "# С помощью этой функции вы можете поситать доверительный интервал для среднего или медианного значения\n",
+        "def mean_confidence_interval(data, confidence=0.95):\n",
+        "    a = 1.0 * np.array(data)\n",
+        "    n = len(a)\n",
+        "    m, se = np.median(a), scipy.stats.sem(a) # мы строили для медианы, так как у нас было смещение в данных. Можно поменять на mean (ср. знач.)\n",
+        "    h = se * scipy.stats.t.ppf((1 + confidence) / 2., n-1)\n",
+        "    return m, m-h, m+h"
+      ],
+      "metadata": {
+        "id": "J8GK77Bluz6q"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Расчет доверительного интервала для количества подписчиков (вероятность 95%)\n",
+        "print(mean_confidence_interval(channels['statistics.subscriberCount'], confidence=0.95))"
+      ],
+      "metadata": {
+        "id": "wZgb_ft3rX6T"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Расчет доверительного интервала для количества видео (вероятность 95%)\n",
+        "print(mean_confidence_interval(channels['statistics.videoCount'], confidence=0.95))"
+      ],
+      "metadata": {
+        "id": "RpRIanYnrYD8"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Расчет доверительного интервала для количества просмотров (вероятность 95%)\n",
+        "print(mean_confidence_interval(videos['statistics.viewCount'], confidence=0.95))"
+      ],
+      "metadata": {
+        "id": "Qv3W-UaJwSeb"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Расчет доверительного интервала для количества комментриев (вероятность 95%)\n",
+        "print(mean_confidence_interval(videos['statistics.commentCount'], confidence=0.95))"
+      ],
+      "metadata": {
+        "id": "-TqqmxjXrKzC"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Расчет доверительного интервала для количества лайков (вероятность 95%)\n",
+        "print(mean_confidence_interval(videos['statistics.likeCount'], confidence=0.95))"
+      ],
+      "metadata": {
+        "id": "KPWEA-YcrTSP"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Расчет доверительного интервала для вовлеченности (вероятность 95%)\n",
+        "print(mean_confidence_interval(videos['invl'], confidence=0.95))"
+      ],
+      "metadata": {
+        "id": "eL4XgaxAr52V"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "Данный алгорит анализа метрик каналов и видео вы можете проделать несколько раз, если вам неоходимо изучть динамику. С помощь анализа доверительных интервалов вы можете определить, значимо ли различаются изучаемые метрики каналов (в двух периодах)."
+      ],
+      "metadata": {
+        "id": "rg5d2dI3xIgI"
+      }
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "### Тематическое моделирование"
+      ],
+      "metadata": {
+        "id": "6bqK0_yuwwW4"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# открываем экселевский файл с комментриями\n",
+        "comments = pandas.read_excel('ваш_файл_с_комментариями.xlsx', index_col = 0 )\n",
+        "comments"
+      ],
+      "metadata": {
+        "id": "oWtjXNJCLO0h"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Концертируем наш датафрейм в лист\n",
+        "data = comments['столбец_с_преодобработанным_текстом'].values.tolist()"
+      ],
+      "metadata": {
+        "id": "Mi1_flXuL-UB"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Преобразование документа в список токенов \n",
+        "def sent_to_words(sentences):\n",
+        "    for sentence in sentences:\n",
+        "        yield(gensim.utils.simple_preprocess(str(sentence))) \n",
+        "data_words = list(sent_to_words(data))"
+      ],
+      "metadata": {
+        "id": "MN2GsPeML_fQ"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Создаем словарь\n",
+        "id2word = corpora.Dictionary(data_words)"
+      ],
+      "metadata": {
+        "id": "WQwXgteDMAyx"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Создаем корпус\n",
+        "texts = data_words"
+      ],
+      "metadata": {
+        "id": "Ff4r1-ArMB22"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Частота встречаемости \n",
+        "corpus = [id2word.doc2bow(text) for text in texts]"
+      ],
+      "metadata": {
+        "id": "VVqDwqiVMCgJ"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# эта функция ползволит определить сколько топиков необходимо добавить в модель, чтобы достишь наивысшего значения согласованности\n",
+        "def compute_coherence_values(dictionary,corpus,texts,limit,start=2,step=1):\n",
+        "    coherence_values = []\n",
+        "    model_list = []\n",
+        "    for num_topics in range(start, limit, step):\n",
+        "        model = gensim.models.LdaModel(corpus=corpus, num_topics=num_topics,id2word=id2word)\n",
+        "        model_list.append(model)\n",
+        "        coherencemodel = CoherenceModel(model=model, texts=texts, dictionary=dictionary, coherence='c_v')\n",
+        "        coherence_values.append(coherencemodel.get_coherence())\n",
+        "        \n",
+        "    return model_list, coherence_values"
+      ],
+      "metadata": {
+        "id": "U3dp5U1wMHDf"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# задаем наши значения\n",
+        "model_list, coherence_values = compute_coherence_values(dictionary=id2word,corpus=corpus,\n",
+        "                                                      texts=texts, start=2, limit=50, step=5)"
+      ],
+      "metadata": {
+        "id": "I_4JCOSqMIva"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Сторим график, который показывает, как изменяется значение согласованности при добавлении топика в модель.\n",
+        "limit=50; start=2; step=5;\n",
+        "x= range(start, limit, step)\n",
+        "plt.plot(x, coherence_values)\n",
+        "plt.xlabel(\"Кол-во топиков\")\n",
+        "plt.ylabel(\"Согласованность\")\n",
+        "plt.legend((\"Изменение согласованности\"), loc='best')\n",
+        "plt.show()"
+      ],
+      "metadata": {
+        "id": "_HeQucZeMLPO"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Строим LDA модель \n",
+        "lda_model = gensim.models.ldamodel.LdaModel(corpus=corpus,\n",
+        "                                           id2word=id2word,\n",
+        "                                           num_topics= 5) # указываем нужное количество топиков"
+      ],
+      "metadata": {
+        "id": "v4fe4rosMMFM"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Можно вывести точное значение согласованности модели, рассчитанное методом c_v \n",
+        "cm = CoherenceModel(model=lda_model, corpus=corpus, texts=texts,\n",
+        "                              dictionary=id2word, coherence='c_v')\n",
+        "coherence = cm.get_coherence()\n",
+        "coherence"
+      ],
+      "metadata": {
+        "id": "3vdFfMpZMQKy"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Можно вывести точное значение согласованности модели, рассчитанное методом u_mass \n",
+        "cm = CoherenceModel(model=lda_model, corpus=corpus,\n",
+        "                              dictionary=id2word, coherence='u_mass')\n",
+        "coherence = cm.get_coherence()\n",
+        "coherence"
+      ],
+      "metadata": {
+        "id": "nrXleA16MR8r"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Выводим получишвшиеся результаты: топики и их ключевые слова с весами \n",
+        "lda_model.print_topics()"
+      ],
+      "metadata": {
+        "id": "UkMHn5r_MTF0"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Создаем датафрейм с оргинальным текстом, чтобы добавить его к таблице ниже \n",
+        "comments.dropna()\n",
+        "comments.index = range(0, len(comments))\n",
+        "comments_list = comments['столбец_с_оригинальным_текстом'].values.tolist()"
+      ],
+      "metadata": {
+        "id": "N1JInSxIMZbi"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "#Тут мы определяем какой документ к какой теме преимущественно относится\n",
+        "def format_topics_sentences(ldamodel=lda_model, corpus=corpus, texts=comments_list):\n",
+        "    sent_topics_df = pandas.DataFrame()\n",
+        "    # Получаем каждый топик для каждого документа \n",
+        "    for i, row in enumerate(ldamodel[corpus]):\n",
+        "        row = sorted(row, key=lambda x: (x[1]), reverse=True)\n",
+        "        # Получите доминирующую тему, процентный вклад и ключевые слова для каждого документа\n",
+        "        for j, (topic_num, prop_topic) in enumerate(row):\n",
+        "            if j == 0:  # => доминирующий топик \n",
+        "                wp = ldamodel.show_topic(topic_num)\n",
+        "                topic_keywords = \", \".join([word for word, prop in wp])\n",
+        "                sent_topics_df = sent_topics_df.append(pandas.Series([int(topic_num), round(prop_topic,4), topic_keywords]), ignore_index=True)\n",
+        "            else:\n",
+        "                break\n",
+        "    sent_topics_df.columns = ['Доминирующий_топик', 'Процентный_вклад', 'Ключевые_слова']\n",
+        "    # Add original text to the end of the output\n",
+        "    contents = pandas.Series(texts)\n",
+        "    sent_topics_df = pandas.concat([sent_topics_df, contents], axis=1)\n",
+        "    return(sent_topics_df)\n",
+        "df_topic_sents_keywords = format_topics_sentences(ldamodel=lda_model, corpus=corpus, texts=comments_list)\n",
+        "# формат\n",
+        "df_dominant_topic = df_topic_sents_keywords.reset_index()\n",
+        "df_dominant_topic.columns = ['Номер_документа', 'Доминирующий_топик', 'Процентный_вклад', 'Ключевые_слова', 'Оригинальный_текст']\n",
+        "# смотрим\n",
+        "df_dominant_topic.head(10)"
+      ],
+      "metadata": {
+        "id": "56V7Opa7McZX"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Смотрим сколько документов попало в каждую тему\n",
+        "df_dominant_topic['Доминирующий_топик'].value_counts()"
+      ],
+      "metadata": {
+        "id": "rHm9RiBOMfrj"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Добавим еще к таблице предобработанный текст \n",
+        "df_dominant_topic['Преобразованный_текст'] = comments['столбец_с_преодобработанным_текстом']"
+      ],
+      "metadata": {
+        "id": "urr7zQ3EjgX9"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "df_dominant_topic"
+      ],
+      "metadata": {
+        "id": "-py3Ip7g2Hjs"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Для интерпретации можно также вывести наиболее связанные с топиками комментарии\n",
+        "pandas.options.display.max_colwidth = 100\n",
+        "\n",
+        "sent_topics_sorteddf_mallet = pandas.DataFrame()\n",
+        "sent_topics_outdf_grpd = df_topic_sents_keywords.groupby('Доминирующий_топик')\n",
+        "\n",
+        "for i, grp in sent_topics_outdf_grpd:\n",
+        "    sent_topics_sorteddf_mallet = pandas.concat([sent_topics_sorteddf_mallet, \n",
+        "                                             grp.sort_values(['Процентный_вклад'], ascending=False).head(1)], \n",
+        "                                            axis=0)\n",
+        "  \n",
+        "sent_topics_sorteddf_mallet.reset_index(drop=True, inplace=True)\n",
+        "\n",
+        "sent_topics_sorteddf_mallet.columns = ['Номер_документа', \"Процентный_вклад\", \"Ключевые_слова\", \"Оригинальный_текст\"]\n",
+        "\n",
+        "sent_topics_sorteddf_mallet"
+      ],
+      "metadata": {
+        "id": "6ibNKua4xq9a"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "Если вы изучаете разные временные периоды, то вы можете с помощью данного кода построить несколько моделей. Скопируйте код и поменяйте файл с данными."
+      ],
+      "metadata": {
+        "id": "kP71i5JMxrWC"
+      }
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "### Сентимент анализ"
+      ],
+      "metadata": {
+        "id": "pVaMnWnPgpAz"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "#Открываем размеченный датафрейм (с тональной отметкой)\n",
+        "df = pandas.read_excel(\"ваш_размеченный_файл.xlsx\",index_col=0)\n",
+        "df.head()"
+      ],
+      "metadata": {
+        "id": "vq4a0ntWNCNw"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "Датафрейм, который мы использовавли вы можете скачать по ссылке: http://study.mokoron.com/#download "
+      ],
+      "metadata": {
+        "id": "LWab6rRV3smH"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Задаем x и y\n",
+        "X = df['text_clear']\n",
+        "y = df['label']"
+      ],
+      "metadata": {
+        "id": "23jbie38NCyg"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Делим на тестовую и обучающу выборку\n",
+        "X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33)"
+      ],
+      "metadata": {
+        "id": "1H2CKW7iNEu5"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Настраиваем класс CountVectorizer\n",
+        "vectorizer = CountVectorizer(min_df=2, max_features=10000)\n",
+        "# Далее подаем в метод transform класса CountVectorizer обучающую выборку\n",
+        "train_vectors = vectorizer.fit_transform(X_train.values.astype('U'))\n",
+        "test_vectors = vectorizer.transform(X_test.values.astype('U'))"
+      ],
+      "metadata": {
+        "id": "oM0u80ZTNFwd"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Вам потребуется примерно 3 минут, чтобы обучить модель. Оптимальные гиперпараметры\n",
+        "model = BernoulliNB(alpha=10.0)\n",
+        "model.fit(train_vectors, y_train)"
+      ],
+      "metadata": {
+        "id": "nuihNUo-NTbf"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "text = vectorizer.transform(df_dominant_topic[\"Преобразованный_текст\"].values.astype('U'))"
+      ],
+      "metadata": {
+        "id": "uLKa3agn2PqX"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Прдесказываем тональность для наших данных\n",
+        "sentiment_text = model.predict(text)"
+      ],
+      "metadata": {
+        "id": "9LnDK46jNegG"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "df_dominant_topic['sentiment_text'] = sentiment_text"
+      ],
+      "metadata": {
+        "id": "6T4GT7ET27_x"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Смотрим сколько всего негавтивных и позитивных текстов.\n",
+        "df_dominant_topic.groupby('sentiment_text').sentiment_text.count()"
+      ],
+      "metadata": {
+        "id": "wtgJ0B5ONg8k"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Доверительный интервал для доли позитивных и негативных комментриев\n",
+        "neg = # число негативных комментариев\n",
+        "pos = # число позитивных комментариев\n",
+        "total = # общее число комментариев\n",
+        "a = 1.96 # с вероятностью 95%, по желанию можно поменять значение z\n",
+        "pos_proc = pos/total # процент позитивных комментариев\n",
+        "neg_proc = neg/total # процент негативных комментариев\n",
+        "s = math.sqrt(pos_proc * neg_proc)  # оценка стандартного отклонения\n",
+        "s_doli = s/(math.sqrt(total)) # стандартная ошибка  доли\n",
+        "\n",
+        "# Верхнии и нижнии границы доверительных интервалов \n",
+        "nig_gran_pos = pos_proc - a * s_doli\n",
+        "verch_gran_pos = pos_proc + a * s_doli\n",
+        "\n",
+        "nig_gran_neg = neg_proc - a * s_doli\n",
+        "verch_gran_neg = neg_proc + a * s_doli\n",
+        "print('Для доли положительных комментариев:', nig_gran_pos, verch_gran_pos, \\\n",
+        "      'Для доли негативных комментариев:', nig_gran_neg, verch_gran_neg)"
+      ],
+      "metadata": {
+        "id": "wdQv-qKqsMIn"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "df_dominant_topic.groupby([\"Доминирующий_топик\", 'sentiment_text']).Доминирующий_топик.aggregate('count')"
+      ],
+      "metadata": {
+        "id": "i31rXXEQ3Ldu"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "df_dominant_topic.groupby([\"Доминирующий_топик\"]).sentiment_text.aggregate('mean')"
+      ],
+      "metadata": {
+        "id": "AIzSc8PI3SQT"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "Если вы изучаете разные временные периоды, то вы можете с помощью данного кода построить несколько моделей. Скопируйте код и поменяйте файл с данными."
+      ],
+      "metadata": {
+        "id": "akBHof4jyC0J"
+      }
+    }
+  ]
+}
